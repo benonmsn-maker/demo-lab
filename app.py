@@ -32,23 +32,23 @@ def extract_json_object(text: str) -> dict:
 def load_ai_dependencies() -> dict[str, Any]:
     from crewai import Agent, Crew, Task
     from crewai_tools import PDFSearchTool
-    from langchain_community.tools.tavily_search import TavilySearchResults
+    from tavily import TavilyClient
 
     return {
         "Agent": Agent,
         "Crew": Crew,
         "Task": Task,
         "PDFSearchTool": PDFSearchTool,
-        "TavilySearchResults": TavilySearchResults,
+        "TavilyClient": TavilyClient,
     }
 
 
 @st.cache_resource(show_spinner=False)
-def build_tools(pdf_path: str, deps: dict[str, Any]):
+def build_tools(pdf_path: str, deps: dict[str, Any], tavily_key: str):
     PDFSearchTool = deps["PDFSearchTool"]
-    TavilySearchResults = deps["TavilySearchResults"]
+    TavilyClient = deps["TavilyClient"]
     pdf_tool = PDFSearchTool(pdf=pdf_path)
-    web_tool = TavilySearchResults(max_results=5)
+    web_tool = TavilyClient(api_key=tavily_key)
     return pdf_tool, web_tool
 
 
@@ -75,7 +75,7 @@ def build_agents(pdf_tool, web_tool, deps: dict[str, Any]):
         ),
         verbose=False,
         allow_delegation=False,
-        tools=[pdf_tool, web_tool],
+        tools=[pdf_tool],
     )
     return router_agent, retriever_agent
 
@@ -138,13 +138,34 @@ Question: {question}
 """
         tools = [pdf_tool]
     elif route == "web":
+        web_results = web_tool.search(
+            query=question,
+            max_results=5,
+            include_answer=True,
+            include_raw_content=False,
+        )
+        answer_hint = web_results.get("answer", "")
+        result_lines = []
+        for idx, item in enumerate(web_results.get("results", []), start=1):
+            title = item.get("title", "Untitled")
+            url = item.get("url", "")
+            content = item.get("content", "")
+            result_lines.append(f"{idx}. {title} ({url})\\n{content}")
+        web_context = "\\n\\n".join(result_lines)
+
         description = f"""
-Use the web search tool to answer the question.
-Prefer reliable sources and include source references.
+Use the provided web search evidence to answer the question.
+Prefer reliable sources and include source references from the evidence below.
 
 Question: {question}
+
+Web Answer Hint:
+{answer_hint}
+
+Web Evidence:
+{web_context}
 """
-        tools = [web_tool]
+        tools = []
     else:
         description = f"""
 Answer directly using reasoning.
@@ -225,7 +246,7 @@ def main():
 
     try:
         deps = load_ai_dependencies()
-        pdf_tool, web_tool = build_tools(pdf_path, deps)
+        pdf_tool, web_tool = build_tools(pdf_path, deps, tavily_key)
         router_agent, retriever_agent = build_agents(pdf_tool, web_tool, deps)
     except Exception as exc:
         st.error(f"Initialization failed: {exc}")

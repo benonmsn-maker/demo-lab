@@ -22,7 +22,8 @@
 4. Add secrets in the app settings:
    - `OPENAI_API_KEY`
    - `TAVILY_API_KEY`
-5. Deploy and copy the public app URL.
+5. Use Python `3.11` (this repo includes `runtime.txt` with `python-3.11`).
+6. Deploy and copy the public app URL.
 
 ## Hugging Face Spaces deploy (Streamlit SDK)
 1. Create a new Space and choose Streamlit SDK.

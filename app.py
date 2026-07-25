@@ -1,12 +1,11 @@
 import json
 import os
 import re
+import sys
 from datetime import datetime
+from typing import Any
 
 import streamlit as st
-from crewai import Agent, Crew, Task
-from crewai_tools import PDFSearchTool
-from langchain_community.tools.tavily_search import TavilySearchResults
 
 
 def extract_json_object(text: str) -> dict:
@@ -30,13 +29,31 @@ def extract_json_object(text: str) -> dict:
 
 
 @st.cache_resource(show_spinner=False)
-def build_tools(pdf_path: str):
+def load_ai_dependencies() -> dict[str, Any]:
+    from crewai import Agent, Crew, Task
+    from crewai_tools import PDFSearchTool
+    from langchain_community.tools.tavily_search import TavilySearchResults
+
+    return {
+        "Agent": Agent,
+        "Crew": Crew,
+        "Task": Task,
+        "PDFSearchTool": PDFSearchTool,
+        "TavilySearchResults": TavilySearchResults,
+    }
+
+
+@st.cache_resource(show_spinner=False)
+def build_tools(pdf_path: str, deps: dict[str, Any]):
+    PDFSearchTool = deps["PDFSearchTool"]
+    TavilySearchResults = deps["TavilySearchResults"]
     pdf_tool = PDFSearchTool(pdf=pdf_path)
     web_tool = TavilySearchResults(max_results=5)
     return pdf_tool, web_tool
 
 
-def build_agents(pdf_tool, web_tool):
+def build_agents(pdf_tool, web_tool, deps: dict[str, Any]):
+    Agent = deps["Agent"]
     router_agent = Agent(
         role="Router Agent",
         goal="Classify a user question into pdf, web, or direct retrieval strategy.",
@@ -74,7 +91,9 @@ def log_event(step: str, actor: str, content):
     )
 
 
-def route_question(question: str, router_agent: Agent):
+def route_question(question: str, router_agent, deps: dict[str, Any]):
+    Task = deps["Task"]
+    Crew = deps["Crew"]
     routing_prompt = f"""
 Classify the question into one of: pdf, web, direct.
 
@@ -107,7 +126,9 @@ Question: {question}
     return route, rationale
 
 
-def retrieve_answer(question: str, route: str, retriever_agent: Agent, pdf_tool, web_tool):
+def retrieve_answer(question: str, route: str, retriever_agent, pdf_tool, web_tool, deps: dict[str, Any]):
+    Task = deps["Task"]
+    Crew = deps["Crew"]
     if route == "pdf":
         description = f"""
 Use the PDF search tool to answer the question.
@@ -159,7 +180,14 @@ def main():
     if "trace_log" not in st.session_state:
         st.session_state.trace_log = []
 
-    default_pdf = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "trasformer_research_paper-dataset.pdf"))
+    default_pdf = os.path.abspath(os.path.join(os.path.dirname(__file__), "trasformer_research_paper-dataset.pdf"))
+
+    if sys.version_info >= (3, 12):
+        st.error(
+            "This app requires Python 3.11 for CrewAI/Chroma compatibility. "
+            "In Streamlit app settings, set Python to 3.11 and reboot."
+        )
+        st.stop()
 
     with st.sidebar:
         st.header("Configuration")
@@ -196,8 +224,9 @@ def main():
         st.stop()
 
     try:
-        pdf_tool, web_tool = build_tools(pdf_path)
-        router_agent, retriever_agent = build_agents(pdf_tool, web_tool)
+        deps = load_ai_dependencies()
+        pdf_tool, web_tool = build_tools(pdf_path, deps)
+        router_agent, retriever_agent = build_agents(pdf_tool, web_tool, deps)
     except Exception as exc:
         st.error(f"Initialization failed: {exc}")
         st.stop()
@@ -224,8 +253,8 @@ def main():
 
         log_event("input", "User", question)
         with st.spinner("Routing and retrieving answer..."):
-            route, rationale = route_question(question, router_agent)
-            answer = retrieve_answer(question, route, retriever_agent, pdf_tool, web_tool)
+            route, rationale = route_question(question, router_agent, deps)
+            answer = retrieve_answer(question, route, retriever_agent, pdf_tool, web_tool, deps)
 
         st.subheader("Result")
         st.markdown(f"**Route:** {route}")
